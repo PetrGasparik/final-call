@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<!-- zákaz zoomu gestem, ať se to na mobilu nechová jako webová stránka -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Final Call</title>
+<style>
+  :root{
+    --bg: #0b0e0a;
+    --panel: #10140f;
+    --fg: #d8f0c8;
+    --fg-dim: #6f8a5f;
+    --accent: #f2c94c;
+    --line: #2a331f;
+  }
+  *{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body{
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    /* monospace = estetika letištní tabule */
+    font-family: "Courier New", Courier, monospace;
+    overscroll-behavior: none;
+    touch-action: manipulation; /* omezí double-tap zoom */
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  body{
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  /* horní lišta — hlavička terminálu */
+  header{
+    padding: env(safe-area-inset-top, 0) 16px 10px 16px;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 14px);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: var(--fg-dim);
+  }
+
+  main{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    padding: 20px;
+    text-align: center;
+  }
+
+  /* cedule se zužujícím se rozsahem bran */
+  .cedule{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 22px 18px;
+    width: min(92vw, 420px);
+  }
+  .cedule .label{
+    font-size: 12px;
+    letter-spacing: 4px;
+    color: var(--fg-dim);
+    margin-bottom: 10px;
+  }
+  .cedule .gates{
+    font-size: 15vw;
+    line-height: 1;
+    font-weight: bold;
+    letter-spacing: 1px;
+    /* velká čísla jako na skutečné letištní tabuli */
+  }
+  .cedule .gates.final{
+    color: var(--accent);
+  }
+  .cedule .sirka{
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--fg-dim);
+    letter-spacing: 1px;
+  }
+
+  .usek{
+    font-size: 12px;
+    letter-spacing: 3px;
+    color: var(--fg-dim);
+  }
+
+  /* dolní ovládací panel — v dosahu palce */
+  footer{
+    padding: 16px;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  }
+  button{
+    display: block;
+    width: 100%;
+    padding: 22px 0;
+    font-family: inherit;
+    font-size: 20px;
+    letter-spacing: 4px;
+    font-weight: bold;
+    background: var(--fg);
+    color: var(--bg);
+    border: none;
+    border-radius: 4px;
+  }
+  button:active{
+    background: var(--accent);
+  }
+  button.restart{
+    background: var(--accent);
+  }
+
+  .hlaseni{
+    font-size: 13px;
+    color: var(--fg-dim);
+    min-height: 18px;
+    letter-spacing: 1px;
+  }
+
+  /* skrytý ladicí panel — zatím jen odznak fáze, plnohodnotný panel přijde v kroku 5 */
+  .verze{
+    position: fixed;
+    bottom: 4px;
+    right: 8px;
+    font-size: 10px;
+    color: var(--line);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span>FINAL CALL</span>
+  <span id="stavHlavicky">TERMINÁL</span>
+</header>
+
+<main>
+  <div class="usek" id="usekText">ÚSEK 0</div>
+
+  <div class="cedule">
+    <div class="label">GATES</div>
+    <div class="gates" id="gatesText">1–60</div>
+    <div class="sirka" id="sirkaText">rozsah 60</div>
+  </div>
+
+  <div class="hlaseni" id="hlaseni"></div>
+</main>
+
+<footer>
+  <button id="hlavniTlacitko">JÍT →</button>
+</footer>
+
+<div class="verze">krok 1</div>
+
+<script>
+/*
+ * FINAL CALL — krok 1: smyčka bez rizika
+ *
+ * Jeden let od vstupu do terminálu po dojití k bráně.
+ * Hráč tapnutím chodí po úsecích, po každém úseku dostane novou
+ * ceduli s užším rozsahem bran (nikdy širším), dokud rozsah
+ * nespadne na jedno číslo — to je brána letu.
+ *
+ * Bez sázky, bez druhé osy (čas/odlet), bez obchodu — to přijde
+ * v dalších krocích. Cílem tohohle kroku je jen ověřit, jestli je
+ * samotné zužování čitelné a jestli nepravidelné skoky mezi
+ * cedulemi působí přirozeně, ne nahodile nebo naopak nudně.
+ */
+
+// ---------------------------------------------------------------
+// BALANC — všechna laditelná čísla na jednom místě.
+// Tohle je hlavní místo, které se bude ladit na telefonu.
+// ---------------------------------------------------------------
+const BALANC = {
+  // úvodní rozsah bran, ze kterého se vychází (např. Gates 1–60)
+  ROZSAH_MIN: 1,
+  ROZSAH_MAX: 60,
+
+  // kolik cedulí (úseků chůze) let celkem má, než se dojde k bráně;
+  // skutečný počet se losuje pokaždé znovu v tomhle rozmezí a hráč
+  // ho dopředu nezná — "neznámá vzdálenost" z designu
+  POCET_USEKU_MIN: 6,
+  POCET_USEKU_MAX: 10,
+
+  // jak moc je zužování mezi kroky nepravidelné (0 = skoro rovnoměrné
+  // zmenšování, 1 = hodně trhané — střídání velkých a malých skoků)
+  NEPRAVIDELNOST: 0.65,
+};
+
+// ---------------------------------------------------------------
+// stav aktuálního letu
+// ---------------------------------------------------------------
+let let_ = null; // objekt aktuálního letu, viz novyLet()
+
+// vrátí celé náhodné číslo v rozsahu [min, max] včetně krajů
+function nahodneCele(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// Naplánuje dopředu, jak široký bude interval bran po každém úseku,
+// od úvodní šířky až po šířku 1 (přesná brána) v posledním úseku.
+// Šířky jsou nepravidelné (jednou velký skok, jednou malý), ale
+// vždycky přísně klesají — interval se nikdy nerozšíří.
+function naplanujSirky(uvodniSirka, pocetUseku) {
+  const sirky = [];
+  let zbyva = uvodniSirka;
+
+  for (let i = 1; i <= pocetUseku; i++) {
+    if (i === pocetUseku) {
+      // poslední úsek vždycky doráží přesně na jedno číslo — bránu
+      sirky.push(1);
+      break;
+    }
+
+    // kolik kroků ještě zbývá po tomhle (aby bylo z čeho dál klesat)
+    const zbyvajiciKroky = pocetUseku - i;
+    const dolniMez = zbyvajiciKroky + 1; // musí zůstat prostor klesat až k 1
+    const horniMez = zbyva - 1; // musí se aspoň o 1 zúžit
+
+    if (dolniMez >= horniMez) {
+      // došel prostor pro nepravidelnost — zúží se o minimum nutné
+      zbyva = Math.max(1, horniMez);
+      sirky.push(zbyva);
+      continue;
+    }
+
+    // náhodný bod mezi dolní a horní mezí; NEPRAVIDELNOST řídí, jak
+    // moc se výběr kloní k extrémům (velký skok / malý skok) místo
+    // rovnoměrného středu
+    const nahoda = Math.random();
+    const vychyleni = Math.pow(nahoda, 1 - BALANC.NEPRAVIDELNOST * 0.8);
+    const novaSirka = Math.round(horniMez - vychyleni * (horniMez - dolniMez));
+
+    zbyva = Math.min(zbyva - 1, Math.max(dolniMez, novaSirka));
+    sirky.push(zbyva);
+  }
+
+  return sirky;
+}
+
+// Založí nový let: vylosuje cílovou bránu, naplánuje zužování
+// a připraví první ceduli (úvodní plný rozsah).
+function novyLet() {
+  const cilovaBrana = nahodneCele(BALANC.ROZSAH_MIN, BALANC.ROZSAH_MAX);
+  const pocetUseku = nahodneCele(BALANC.POCET_USEKU_MIN, BALANC.POCET_USEKU_MAX);
+  const uvodniSirka = BALANC.ROZSAH_MAX - BALANC.ROZSAH_MIN + 1;
+  const planSirek = naplanujSirky(uvodniSirka, pocetUseku);
+
+  return {
+    cilovaBrana,
+    pocetUseku,
+    planSirek,
+    usek: 0, // kolik úseků už hráč prošel
+    lo: BALANC.ROZSAH_MIN,
+    hi: BALANC.ROZSAH_MAX,
+    dorazil: false,
+  };
+}
+
+// Z předchozího intervalu [lo,hi] a požadované nové šířky vybere
+// nový interval, který cíl stále obsahuje a je podmnožinou předchozího.
+// Volba polohy uvnitř přípustného rozsahu je náhodná — odtud plyne
+// pocit, že se cedule "posunula", ne jen zúžila symetricky.
+function zuzInterval(lo, hi, cil, novaSirka) {
+  if (novaSirka <= 1) {
+    return { lo: cil, hi: cil };
+  }
+  const minLo = Math.max(lo, cil - novaSirka + 1);
+  const maxLo = Math.min(cil, hi - novaSirka + 1);
+  const novaLo = nahodneCele(minLo, maxLo);
+  return { lo: novaLo, hi: novaLo + novaSirka - 1 };
+}
+
+// ---------------------------------------------------------------
+// vykreslení
+// ---------------------------------------------------------------
+const gatesText = document.getElementById("gatesText");
+const sirkaText = document.getElementById("sirkaText");
+const usekText = document.getElementById("usekText");
+const hlaseni = document.getElementById("hlaseni");
+const stavHlavicky = document.getElementById("stavHlavicky");
+const tlacitko = document.getElementById("hlavniTlacitko");
+const gatesEl = document.querySelector(".cedule .gates");
+
+function vykresli() {
+  usekText.textContent = "ÚSEK " + let_.usek;
+
+  if (let_.lo === let_.hi) {
+    gatesText.textContent = String(let_.lo);
+    gatesEl.classList.add("final");
+    sirkaText.textContent = "brána";
+  } else {
+    gatesText.textContent = let_.lo + "–" + let_.hi;
+    gatesEl.classList.remove("final");
+    sirkaText.textContent = "rozsah " + (let_.hi - let_.lo + 1);
+  }
+
+  if (let_.dorazil) {
+    stavHlavicky.textContent = "DORAZIL JSTE";
+    hlaseni.textContent = "Brána " + let_.cilovaBrana + " — konec letu.";
+    tlacitko.textContent = "ZNOVU ↻";
+    tlacitko.classList.add("restart");
+  } else {
+    stavHlavicky.textContent = "TERMINÁL";
+    hlaseni.textContent = "";
+    tlacitko.textContent = "JÍT →";
+    tlacitko.classList.remove("restart");
+  }
+}
+
+// ---------------------------------------------------------------
+// krok hry — jedno tapnutí = jeden úsek chůze
+// ---------------------------------------------------------------
+function tapni() {
+  if (let_.dorazil) {
+    let_ = novyLet();
+    vykresli();
+    return;
+  }
+
+  const novaSirka = let_.planSirek[let_.usek];
+  const novy = zuzInterval(let_.lo, let_.hi, let_.cilovaBrana, novaSirka);
+  let_.lo = novy.lo;
+  let_.hi = novy.hi;
+  let_.usek += 1;
+
+  if (let_.lo === let_.hi) {
+    let_.dorazil = true;
+  }
+
+  vykresli();
+}
+
+tlacitko.addEventListener("click", tapni);
+
+// ---------------------------------------------------------------
+// start
+// ---------------------------------------------------------------
+let_ = novyLet();
+vykresli();
+</script>
+</body>
+</html>
