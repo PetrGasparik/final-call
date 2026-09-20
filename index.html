@@ -95,6 +95,29 @@
     color: var(--fg-dim);
   }
 
+  /* druhá osa — rozmazaná hlášení o odletu, samostatný řádek tabule */
+  .odlet{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 12px 18px;
+    width: min(92vw, 420px);
+  }
+  .odlet .label{
+    font-size: 11px;
+    letter-spacing: 4px;
+    color: var(--fg-dim);
+    margin-bottom: 6px;
+  }
+  .odlet .zprava{
+    font-size: 15px;
+    letter-spacing: 2px;
+    font-weight: bold;
+  }
+  .odlet .zprava.urgentni{
+    color: var(--accent);
+  }
+
   /* dolní ovládací panel — v dosahu palce */
   footer{
     padding: 16px;
@@ -153,6 +176,11 @@
     <div class="sirka" id="sirkaText">rozsah 60</div>
   </div>
 
+  <div class="odlet">
+    <div class="label">ODLET</div>
+    <div class="zprava" id="odletText">· · ·</div>
+  </div>
+
   <div class="hlaseni" id="hlaseni"></div>
 </main>
 
@@ -160,21 +188,25 @@
   <button id="hlavniTlacitko">JÍT →</button>
 </footer>
 
-<div class="verze">krok 1</div>
+<div class="verze">krok 2</div>
 
 <script>
 /*
- * FINAL CALL — krok 1: smyčka bez rizika
+ * FINAL CALL — krok 2: druhá osa (odlet)
  *
- * Jeden let od vstupu do terminálu po dojití k bráně.
+ * Jeden let od vstupu do terminálu po dojití k bráně nebo zmeškání.
  * Hráč tapnutím chodí po úsecích, po každém úseku dostane novou
- * ceduli s užším rozsahem bran (nikdy širším), dokud rozsah
- * nespadne na jedno číslo — to je brána letu.
+ * ceduli s užším rozsahem bran (nikdy širším) — osa "kde".
  *
- * Bez sázky, bez druhé osy (čas/odlet), bez obchodu — to přijde
- * v dalších krocích. Cílem tohohle kroku je jen ověřit, jestli je
- * samotné zužování čitelné a jestli nepravidelné skoky mezi
- * cedulemi působí přirozeně, ne nahodile nebo naopak nudně.
+ * Souběžně běží osa "kdy": rozmazaná hlášení o odletu (boarding →
+ * poslední výzva → vyvolávají jméno), bez jediného čísla a bez
+ * odpočtu. Obě osy se zužují nezávisle a různým tempem — právě
+ * v tom rozdílu tempa má vzniknout napětí. Pokud odlet dorazí do
+ * poslední fáze dřív, než hráč dojde na bránu, let je zmeškaný.
+ *
+ * Pořád bez sázky a bez obchodu — jen dvě osy vedle sebe. Cílem
+ * kroku je ověřit, jestli je tenhle rozdíl tempa cítit, a jestli
+ * zmeškání přichází jako důsledek nepozornosti, ne jako čirá loterie.
  */
 
 // ---------------------------------------------------------------
@@ -195,6 +227,17 @@ const BALANC = {
   // jak moc je zužování mezi kroky nepravidelné (0 = skoro rovnoměrné
   // zmenšování, 1 = hodně trhané — střídání velkých a malých skoků)
   NEPRAVIDELNOST: 0.65,
+
+  // Osa "kdy" (odlet). Odlet nastává v úseku:
+  //   POCET_USEKU (kdy by hráč normálně došel na bránu) + náhodný posun.
+  // Záporný posun = odlet přijde DŘÍV, než hráč stihne dojít — riziko
+  // zmeškání i bez chyby. Kladný posun = časová rezerva navíc.
+  ODLET_POSUN_MIN: -2,
+  ODLET_POSUN_MAX: 5,
+
+  // tři rozmazaná hlášení, která se postupně objevují místo odpočtu;
+  // první text je výchozí stav (ještě se nic neděje)
+  ODLET_HLASENI: ["· · ·", "PALUBA OTEVŘENA", "POSLEDNÍ VÝZVA", "VYVOLÁVAJÍ VAŠE JMÉNO"],
 };
 
 // ---------------------------------------------------------------
@@ -248,22 +291,44 @@ function naplanujSirky(uvodniSirka, pocetUseku) {
   return sirky;
 }
 
-// Založí nový let: vylosuje cílovou bránu, naplánuje zužování
-// a připraví první ceduli (úvodní plný rozsah).
+// Naplánuje tři milníky osy "kdy": ve kterých úsecích se objeví
+// jednotlivá hlášení. Poslední milník je vždycky samotný odletUsek —
+// v tu chvíli buď hráč už stojí na bráně, nebo je let zmeškaný.
+// Rozestupy jsou náhodné, takže hlášení naskakují nepravidelně,
+// stejně jako zužování bran.
+function naplanujHlaseni(odletUsek) {
+  if (odletUsek <= 1) {
+    return [odletUsek, odletUsek, odletUsek];
+  }
+  const a = nahodneCele(1, odletUsek);
+  const b = nahodneCele(1, odletUsek);
+  return [Math.min(a, b), Math.max(a, b), odletUsek];
+}
+
+// Založí nový let: vylosuje cílovou bránu, naplánuje zužování obou
+// os (kde i kdy) a připraví první ceduli (úvodní plný rozsah).
 function novyLet() {
   const cilovaBrana = nahodneCele(BALANC.ROZSAH_MIN, BALANC.ROZSAH_MAX);
   const pocetUseku = nahodneCele(BALANC.POCET_USEKU_MIN, BALANC.POCET_USEKU_MAX);
   const uvodniSirka = BALANC.ROZSAH_MAX - BALANC.ROZSAH_MIN + 1;
   const planSirek = naplanujSirky(uvodniSirka, pocetUseku);
 
+  // odlet je nezávislý na počtu úseků k bráně — proto obě osy
+  // postupují jiným tempem a hráč to musí sledovat současně
+  const odletUsek = Math.max(1, pocetUseku + nahodneCele(BALANC.ODLET_POSUN_MIN, BALANC.ODLET_POSUN_MAX));
+  const hlaseniMilniky = naplanujHlaseni(odletUsek);
+
   return {
     cilovaBrana,
     pocetUseku,
     planSirek,
+    odletUsek,
+    hlaseniMilniky,
     usek: 0, // kolik úseků už hráč prošel
     lo: BALANC.ROZSAH_MIN,
     hi: BALANC.ROZSAH_MAX,
-    dorazil: false,
+    dorazil: false, // úspěšně došel na bránu včas
+    zmeskal: false, // let odletěl dřív, než došel na bránu
   };
 }
 
@@ -287,10 +352,16 @@ function zuzInterval(lo, hi, cil, novaSirka) {
 const gatesText = document.getElementById("gatesText");
 const sirkaText = document.getElementById("sirkaText");
 const usekText = document.getElementById("usekText");
+const odletText = document.getElementById("odletText");
 const hlaseni = document.getElementById("hlaseni");
 const stavHlavicky = document.getElementById("stavHlavicky");
 const tlacitko = document.getElementById("hlavniTlacitko");
 const gatesEl = document.querySelector(".cedule .gates");
+
+// Kolik milníků osy "kdy" už hráč minul → index do ODLET_HLASENI.
+function odletStadium() {
+  return let_.hlaseniMilniky.filter((m) => let_.usek >= m).length;
+}
 
 function vykresli() {
   usekText.textContent = "ÚSEK " + let_.usek;
@@ -305,9 +376,18 @@ function vykresli() {
     sirkaText.textContent = "rozsah " + (let_.hi - let_.lo + 1);
   }
 
+  const stadium = odletStadium();
+  odletText.textContent = BALANC.ODLET_HLASENI[stadium];
+  odletText.classList.toggle("urgentni", stadium >= 2);
+
   if (let_.dorazil) {
     stavHlavicky.textContent = "DORAZIL JSTE";
-    hlaseni.textContent = "Brána " + let_.cilovaBrana + " — konec letu.";
+    hlaseni.textContent = "Brána " + let_.cilovaBrana + " — stihl jsi to.";
+    tlacitko.textContent = "ZNOVU ↻";
+    tlacitko.classList.add("restart");
+  } else if (let_.zmeskal) {
+    stavHlavicky.textContent = "ZMEŠKÁNO";
+    hlaseni.textContent = "Let odletěl bez tebe.";
     tlacitko.textContent = "ZNOVU ↻";
     tlacitko.classList.add("restart");
   } else {
@@ -322,7 +402,7 @@ function vykresli() {
 // krok hry — jedno tapnutí = jeden úsek chůze
 // ---------------------------------------------------------------
 function tapni() {
-  if (let_.dorazil) {
+  if (let_.dorazil || let_.zmeskal) {
     let_ = novyLet();
     vykresli();
     return;
@@ -335,7 +415,12 @@ function tapni() {
   let_.usek += 1;
 
   if (let_.lo === let_.hi) {
+    // došel na bránu — nezáleží, jestli přesně v úseku odletu,
+    // stihnout znamená být tam nejpozději ve chvíli odletu
     let_.dorazil = true;
+  } else if (let_.usek >= let_.odletUsek) {
+    // odlet nastal a hráč ještě neví přesnou bránu — zmeškáno
+    let_.zmeskal = true;
   }
 
   vykresli();
